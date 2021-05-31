@@ -1,0 +1,39 @@
+query productDetail($page: Int, $size: Int) {
+    productDetail: productsElastic(
+        pageSize: $size,
+        currentPage: $page,
+        sort: {name: ASC}
+    ) {
+        items {
+            id
+            created_at
+            updated_at
+            name
+            sku
+            breadcrumbs
+            active
+            grouped_products {dozir_ap_otkor_df dozir_chisl_df fasov_chisl_df fasov_ap_otkor_df form_vypysk_df, sku}
+            manufacturer_ru {label}
+            manufacturer_id {label option_id}
+            media_gallery {url_image url_thumbnail url_small_image}
+            promo_label
+            orig_preparat {label}
+            mnn_id {label, option_id}
+            mnn_ru
+            is_in_stock
+            rec_need
+            delivery
+            thermolabile
+            orig_preparat {label}
+            specification_set_attributes {
+                attribute_label values {value}
+            }
+            description_set_attributes {
+                attribute_label values {value}
+            }
+            price {
+                regularPrice {amount {value currency}}
+            }
+        }
+    }
+}
