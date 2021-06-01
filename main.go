@@ -12,10 +12,15 @@ import (
 	"os"
 	"time"
 
+	"github.com/joho/godotenv"
 	"golang.org/x/net/proxy"
 )
 
 func setUpProxy() {
+	proxyURL := os.Getenv("PROXY_URL")
+	proxyUsername := os.Getenv("PROXY_USERNAME")
+	proxyPass := os.Getenv("PROXY_PASS")
+
 	baseDialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
@@ -23,8 +28,8 @@ func setUpProxy() {
 
 	dialer, err := proxy.SOCKS5(
 		"tcp",
-		PROXY_URL,
-		&proxy.Auth{User: PROXY_USERNAME, Password: PROXY_PASS},
+		proxyURL,
+		&proxy.Auth{User: proxyUsername, Password: proxyPass},
 		baseDialer,
 	)
 	if err != nil {
@@ -65,6 +70,10 @@ func checkIP() {
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
 	setUpProxy()
 	checkIP()
 

@@ -2,7 +2,6 @@ package mongodb
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"time"
 
@@ -53,8 +52,6 @@ func (mc *MongoClient) InsertMany(collectionName string, items []interface{}) in
 
 	cnt := len(result.InsertedIDs)
 
-	println(fmt.Sprintf("Inserted into `%s`: %d", collectionName, cnt))
-
 	return cnt
 }
 
@@ -68,6 +65,4 @@ func (mc *MongoClient) InsertOne(collectionName string, item interface{}) {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	println(fmt.Sprintf("One inserted into `%s`", collectionName))
 }

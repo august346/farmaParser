@@ -56,7 +56,6 @@ func Link(URL string, pth string) string {
 }
 
 func htmlDocument(link string) *goquery.Document {
-	client := &http.Client{}
 
 	req, err := http.NewRequest("GET", link, nil)
 	if err != nil {
@@ -64,7 +63,7 @@ func htmlDocument(link string) *goquery.Document {
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:88.0) Gecko/20100101 Firefox/88.0")
 
-	res, err := client.Do(req)
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Fatal(err)
 	}

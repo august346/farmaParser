@@ -1,7 +1,6 @@
 package hp
 
 import (
-	"encoding/json"
 	"farma/mongodb"
 	"fmt"
 	"log"
@@ -31,75 +30,51 @@ type attribute struct {
 }
 
 type medicament struct {
-	Path        string            `json:"path"`
-	Groups      []string          `json:"groups"`
-	Title       string            `json:"title"`
-	Price       float32           `json:"price"`
-	Images      []string          `json:"images"`
-	Features    map[string]string `json:"features"`
-	AnalogPaths []string          `json:"analogPaths"`
-	Attributes  []*attribute      `json:"attributes"`
+	Path       string            `json:"path"`
+	Groups     []string          `json:"groups"`
+	Title      string            `json:"title"`
+	Price      float32           `json:"price"`
+	Images     []string          `json:"images"`
+	Features   map[string]string `json:"features"`
+	Attributes []*attribute      `json:"attributes"`
 }
 
-func letterPaths(doc *goquery.Document) []string {
-	paths := []string{}
+func scrabHrefs(selector string, doc *goquery.Document) []string {
+	result := []string{}
 
-	doc.Find("li.main-alphabet__nav-item a").Each(func(i int, s *goquery.Selection) {
+	doc.Find(selector).Each(func(i int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if exists {
-			paths = append(paths, href)
+			result = append(result, href)
 		}
 	})
 
-	return paths
-}
-
-func mnnPaths(doc *goquery.Document) []string {
-	paths := []string{}
-
-	doc.Find(".main-alphabet__list a").Each(func(i int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if exists {
-			paths = append(paths, href)
-		}
-	})
-
-	return paths
+	return result
 }
 
 func medicamentPaths(doc *goquery.Document, ticker *time.Ticker, withNexts bool) []string {
-	paths := []string{}
-
-	doc.Find("div.card-list__element a.product-card__image").Each(func(i int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if exists {
-			paths = append(paths, href)
-		}
-	})
+	result := scrabHrefs("div.card-list__element a.product-card__image", doc)
 
 	if !withNexts {
-		return paths
+		return result
 	}
 
-	doc.Find("div.pagination.pagination_large a.pagination__item").Each(func(i int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if exists {
-			paths = append(paths, medicamentPaths(newDoc(href, nil, ticker), ticker, false)...)
-		}
-	})
+	for _, nextLink := range scrabHrefs("div.pagination.pagination_large a.pagination__item", doc) {
+		nextDoc := newDoc(nextLink, nil, ticker)
+		result = append(result, medicamentPaths(nextDoc, ticker, false)...)
+	}
 
-	return paths
+	return result
 }
 
 func newMedicament(path string, doc *goquery.Document) *medicament {
 	med := &medicament{
-		Path:        path,
-		Title:       strings.TrimSpace(doc.Find("h1.product-detail__title").Text()),
-		Groups:      groups(doc),
-		Images:      images(doc),
-		Features:    features(doc),
-		AnalogPaths: analogPaths(doc),
-		Attributes:  attributes(doc),
+		Path:       path,
+		Title:      strings.TrimSpace(doc.Find("h1.product-detail__title").Text()),
+		Groups:     groups(doc),
+		Images:     scrabHrefs("div[data-fancybox=\"gallery\"]", doc),
+		Features:   features(doc),
+		Attributes: attributes(doc),
 	}
 
 	priceDiv := doc.Find("div.product-detail__price_new")
@@ -150,32 +125,6 @@ func features(doc *goquery.Document) map[string]string {
 	})
 
 	return results
-}
-
-func images(doc *goquery.Document) []string {
-	images := []string{}
-
-	doc.Find("div[data-fancybox=\"gallery\"]").Each(func(i int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if exists {
-			images = append(images, href)
-		}
-	})
-
-	return images
-}
-
-func analogPaths(doc *goquery.Document) []string {
-	paths := []string{}
-
-	doc.Find("div#analogues a.product-card__image").Each(func(i int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if exists {
-			paths = append(paths, href)
-		}
-	})
-
-	return paths
 }
 
 func attributes(doc *goquery.Document) []*attribute {
@@ -245,9 +194,11 @@ func attrValues(text string) []*subAttribute {
 func extract(meds chan *medicament, quit chan bool, limit int, ticker *time.Ticker) {
 	mapped := map[string]bool{}
 
-	for _, letP := range letterPaths(newDoc(PATH_MNN, nil, ticker)) {
+	for _, letP := range scrabHrefs("li.main-alphabet__nav-item a", newDoc(PATH_MNN, nil, ticker)) {
 		let := letP[len(letP)-1:]
-		for _, mnnP := range mnnPaths(newDoc(PATH_MNN, map[string]string{"abc": let}, ticker)) {
+		mnnReqQuery := map[string]string{"abc": let}
+		letDoc := newDoc(PATH_MNN, mnnReqQuery, ticker)
+		for _, mnnP := range scrabHrefs(".main-alphabet__list a", letDoc) {
 			for _, medP := range medicamentPaths(newDoc(mnnP, nil, ticker), ticker, true) {
 				if isIn(medP, mapped) {
 					continue
@@ -282,8 +233,7 @@ func newDoc(path string, queryParams map[string]string, ticker *time.Ticker) *go
 		req.URL.RawQuery = q.Encode()
 	}
 
-	client := &http.Client{}
-	res, err := client.Do(req)
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -299,6 +249,8 @@ func newDoc(path string, queryParams map[string]string, ticker *time.Ticker) *go
 	}
 
 	<-ticker.C
+
+	println(path)
 
 	return doc
 }
@@ -328,11 +280,4 @@ func ParseAll(collectionName string) {
 	go insertAll(collectionName, meds, quit)
 
 	extract(meds, quit, -1, ticker)
-
-	println(prettyPrint(meds))
-}
-
-func prettyPrint(i interface{}) string {
-	s, _ := json.MarshalIndent(i, "", "  ")
-	return string(s)
 }

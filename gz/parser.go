@@ -1,7 +1,6 @@
 package gz
 
 import (
-	"encoding/json"
 	"farma/mongodb"
 	"farma/parser"
 	"log"
@@ -312,11 +311,4 @@ func ParseAll(medColName, catColName string) {
 	go insertAll(medColName, catColName, meds, cats, quit)
 
 	extract(prsr, -1, meds, cats, quit)
-
-	println(prettyPrint(meds))
-}
-
-func prettyPrint(i interface{}) string {
-	s, _ := json.MarshalIndent(i, "", "  ")
-	return string(s)
 }

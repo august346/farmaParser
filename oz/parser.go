@@ -25,9 +25,8 @@ type querries struct {
 }
 
 type parser struct {
-	HTTPClient *http.Client
-	Querries   querries
-	PageSize   int
+	Querries querries
+	PageSize int
 }
 
 func requstJsonToBytes(r requestJson) []byte {
@@ -50,7 +49,6 @@ func newParser(pageSize int) *parser {
 	}
 
 	return &parser{
-		HTTPClient: http.DefaultClient,
 		Querries: querries{
 			Request:   string(graphql),
 			Transform: string(jq),
@@ -83,7 +81,7 @@ func (p *parser) request(requestJSONBytes []byte) *http.Request {
 }
 
 func (p *parser) responseBody(request *http.Request) []byte {
-	resp, err := p.HTTPClient.Do(request)
+	resp, err := http.DefaultClient.Do(request)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -137,6 +135,6 @@ func ParseAll(collectionName string, limit int) {
 		mongoClient.InsertMany(collectionName, items)
 
 		time.Sleep(time.Second)
-		println("Parsed", i+1)
+		println("Parsed", i+1, limit)
 	}
 }
