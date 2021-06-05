@@ -131,22 +131,22 @@ func (f *FarmaParser) runParse() {
 	}
 }
 
-func (f *FarmaParser) checkProxy() (*checkProxyResult, error) {
+func (f *FarmaParser) checkProxy() *checkProxyResult {
 	resp, err := f.httpClient.Get(URL_CHECK_IP)
 	if err != nil {
-		return nil, err
+		log.Fatal(err)
 	}
 	defer resp.Body.Close()
 
 	var cpr *checkProxyResult
 	err = json.NewDecoder(resp.Body).Decode(&cpr)
 	if err != nil {
-		return nil, err
+		log.Fatal(err)
 	} else if cpr.CC == "RU" {
-		return cpr, fmt.Errorf("broken proxy: check IP result - %q", cpr)
+		log.Fatal(fmt.Sprintf("broken proxy: check IP result - %q", cpr))
 	}
 
-	return cpr, nil
+	return cpr
 }
 
 func (f *FarmaParser) transformJSON(data interface{}) (*medicament, error) {
@@ -169,7 +169,7 @@ func (f *FarmaParser) runInsertions() {
 }
 
 func (fp *FarmaParser) Run(f func(*FarmaParser)) {
-	fp.checkProxy()
+	fmt.Printf("Proxy OK: %q", fp.checkProxy())
 
 	go fp.runParse()
 	go fp.runInsertions()
