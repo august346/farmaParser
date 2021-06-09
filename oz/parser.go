@@ -4,73 +4,81 @@ import (
 	"bytes"
 	"encoding/json"
 	"farma/jq"
-	"farma/mongodb"
-	"io"
+	"farma/parser"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"time"
+	"os"
 )
 
-var URL string = string([]rune{104, 116, 116, 112, 115, 58, 47, 47, 119, 119, 119, 46, 114, 105, 103, 108, 97, 46, 114, 117, 47, 103, 114, 97, 112, 104, 113, 108})
+var URL string
 
 type requestJson struct {
 	Query     string         `json:"query"`
 	Variables map[string]int `json:"variables"`
 }
 
-type querries struct {
-	Request   string
-	Transform string
-}
+func Jobber(f *parser.FarmaParser) {
+	var err error
+	var tmpBytes []byte
+	var graphqlQuery string
+	var jqQuery string
 
-type parser struct {
-	Querries querries
-	PageSize int
-}
+	URL = os.Getenv("OZ_URL")
 
-func requstJsonToBytes(r requestJson) []byte {
-	value, err := json.Marshal(r)
+	tmpBytes, err = ioutil.ReadFile("files/oz.graphql")
 	if err != nil {
 		log.Fatal(err)
 	}
-	return value
-}
+	graphqlQuery = string(tmpBytes)
 
-func newParser(pageSize int) *parser {
-	graphql, err := ioutil.ReadFile("files/oz.graphql")
+	tmpBytes, err = ioutil.ReadFile("files/oz.jq")
 	if err != nil {
 		log.Fatal(err)
 	}
+	jqQuery = string(tmpBytes)
 
-	jq, err := ioutil.ReadFile("files/oz.jq")
-	if err != nil {
-		log.Fatal(err)
-	}
+	for i := 0; ; i++ {
+		f.Jobs <- &parser.ResponseJob{
+			Type:    "bytes",
+			Request: request(graphqlQuery, i, 20),
+		}
 
-	return &parser{
-		Querries: querries{
-			Request:   string(graphql),
-			Transform: string(jq),
-		},
-		PageSize: pageSize,
-	}
-}
+		rspBytes := <-f.RspBytes
+		if rspBytes.Err != nil {
+			log.Fatal(err)
+		}
 
-func (p *parser) requestJSONBytes(pageNumber int) []byte {
-	return requstJsonToBytes(
-		requestJson{
-			Query: p.Querries.Request,
-			Variables: map[string]int{
-				"page": pageNumber,
-				"size": p.PageSize,
+		transformed, err := jq.Transform(
+			map[string]interface{}{
+				"response_body": string(rspBytes.Bytes),
 			},
-		},
-	)
+			string(jqQuery),
+		)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		for _, rawMed := range transformed.([]interface{}) {
+			f.RawMedicaments <- rawMed
+		}
+	}
 }
 
-func (p *parser) request(requestJSONBytes []byte) *http.Request {
-	req, err := http.NewRequest("POST", URL, bytes.NewBuffer(requestJSONBytes))
+func request(query string, pageNumber int, pSize int) *http.Request {
+	reqBodyObject := &requestJson{
+		Query: query,
+		Variables: map[string]int{
+			"page": pageNumber,
+			"size": pSize,
+		},
+	}
+	reqBody, err := json.Marshal(reqBodyObject)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	req, err := http.NewRequest("POST", URL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -78,63 +86,4 @@ func (p *parser) request(requestJSONBytes []byte) *http.Request {
 	req.Header.Set("Content-Type", "application/json")
 
 	return req
-}
-
-func (p *parser) responseBody(request *http.Request) []byte {
-	resp, err := http.DefaultClient.Do(request)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return body
-}
-
-func (p *parser) transformedJSON(responseBody []byte) []interface{} {
-	input := map[string]interface{}{
-		"response_body": string(responseBody),
-	}
-
-	transformed, err := jq.Transform(
-		input,
-		string(p.Querries.Transform),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return transformed.([]interface{})
-}
-
-func (p *parser) items(pageNumber int) []interface{} {
-	reqJSONBytes := p.requestJSONBytes(pageNumber)
-
-	req := p.request(reqJSONBytes)
-
-	body := p.responseBody(req)
-
-	return p.transformedJSON(body)
-}
-
-func ParseAll(collectionName string, limit int) {
-	mongoClient := mongodb.NewMongoClient()
-
-	p := newParser(limit)
-
-	for i := 0; ; i++ {
-		items := p.items(i)
-		if len(items) == 0 {
-			return
-		}
-
-		mongoClient.InsertMany(collectionName, items)
-
-		time.Sleep(time.Second)
-		println("Parsed", i+1, limit)
-	}
 }

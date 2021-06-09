@@ -1,11 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"farma/gz"
 	"farma/hp"
 	"farma/oz"
+	"farma/parser"
 	"log"
 	"net"
 	"net/http"
@@ -45,37 +45,15 @@ func setUpProxy() {
 	httpTransport.DialContext = contextDialer.DialContext
 }
 
-type checkIPResult struct {
-	IP      string `json:"ip"`
-	Country string `json:"country"`
-	CC      string `json:"cc"`
-}
-
-func checkIP() {
-	resp, err := http.Get("https://api.myip.com/")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	var chRes checkIPResult
-	err = json.NewDecoder(resp.Body).Decode(&chRes)
-	if err != nil {
-		log.Fatal(err)
-	} else if chRes.CC == "RU" {
-		log.Fatal(errors.New("proxy broken"))
-	}
-
-	log.Printf("%q \n", chRes)
-}
-
 func main() {
+	var ticker *time.Ticker
+	var jobber func(f *parser.FarmaParser)
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
 	setUpProxy()
-	checkIP()
 
 	println("started")
 
@@ -83,12 +61,17 @@ func main() {
 
 	switch args[0] {
 	case "oz":
-		oz.ParseAll(args[1], 10)
+		ticker = time.NewTicker(2 * time.Second)
+		jobber = oz.Jobber
 	case "gz":
-		gz.ParseAll(args[1], args[2])
+		ticker = time.NewTicker(time.Second)
+		jobber = gz.Jobber
 	case "hp":
-		hp.ParseAll(args[1])
+		ticker = time.NewTicker(time.Second)
+		jobber = hp.Jobber
 	}
+
+	parser.NewRawFarmaParser(ticker, args[1]).Run(jobber)
 
 	println("parsed")
 

@@ -1,23 +1,22 @@
 package hp
 
 import (
-	"farma/mongodb"
-	"fmt"
+	"farma/parser"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
 const (
-	PATH_MNN string = "/ingredients/"
+	HREF_LETTERS string = "/ingredients/"
 )
 
-var URL string = string([]byte{104, 116, 116, 112, 115, 58, 47, 47, 112, 108, 97, 110, 101, 116, 97, 122, 100, 111, 114, 111, 118, 111, 46, 114, 117})
+var URL string
 
 type subAttribute struct {
 	Name   string   `json:"name"`
@@ -30,7 +29,7 @@ type attribute struct {
 }
 
 type medicament struct {
-	Path       string            `json:"path"`
+	Href       string            `json:"href"`
 	Groups     []string          `json:"groups"`
 	Title      string            `json:"title"`
 	Price      float32           `json:"price"`
@@ -52,24 +51,26 @@ func scrabHrefs(selector string, doc *goquery.Document) []string {
 	return result
 }
 
-func medicamentPaths(doc *goquery.Document, ticker *time.Ticker, withNexts bool) []string {
-	result := scrabHrefs("div.card-list__element a.product-card__image", doc)
+func medicamentHrefs(f *parser.FarmaParser, href string, withNexts bool) []string {
+	medsHrefsDoc := doc(f, href, nil)
+
+	result := scrabHrefs("div.card-list__element a.product-card__image", medsHrefsDoc)
 
 	if !withNexts {
 		return result
 	}
 
-	for _, nextLink := range scrabHrefs("div.pagination.pagination_large a.pagination__item", doc) {
-		nextDoc := newDoc(nextLink, nil, ticker)
-		result = append(result, medicamentPaths(nextDoc, ticker, false)...)
+	moreMedsHrefs := scrabHrefs("div.pagination.pagination_large a.pagination__item", medsHrefsDoc)
+	for _, moreMedsHref := range moreMedsHrefs {
+		result = append(result, medicamentHrefs(f, moreMedsHref, false)...)
 	}
 
 	return result
 }
 
-func newMedicament(path string, doc *goquery.Document) *medicament {
+func newMedicament(href string, doc *goquery.Document) *medicament {
 	med := &medicament{
-		Path:       path,
+		Href:       href,
 		Title:      strings.TrimSpace(doc.Find("h1.product-detail__title").Text()),
 		Groups:     groups(doc),
 		Images:     scrabHrefs("div[data-fancybox=\"gallery\"]", doc),
@@ -191,35 +192,38 @@ func attrValues(text string) []*subAttribute {
 	return result
 }
 
-func extract(meds chan *medicament, quit chan bool, limit int, ticker *time.Ticker) {
-	mapped := map[string]bool{}
+func Jobber(f *parser.FarmaParser) {
+	URL = os.Getenv("HP_URL")
 
-	for _, letP := range scrabHrefs("li.main-alphabet__nav-item a", newDoc(PATH_MNN, nil, ticker)) {
-		let := letP[len(letP)-1:]
-		mnnReqQuery := map[string]string{"abc": let}
-		letDoc := newDoc(PATH_MNN, mnnReqQuery, ticker)
-		for _, mnnP := range scrabHrefs(".main-alphabet__list a", letDoc) {
-			for _, medP := range medicamentPaths(newDoc(mnnP, nil, ticker), ticker, true) {
-				if isIn(medP, mapped) {
+	gottenMedicaments := map[string]bool{}
+
+	lettersHrefs := scrabHrefs("li.main-alphabet__nav-item a", doc(f, HREF_LETTERS, nil))
+	for _, letterHref := range lettersHrefs {
+		letter := letterHref[len(letterHref)-1:]
+		mnnReqQuery := map[string]string{"abc": letter}
+		letterDoc := doc(f, HREF_LETTERS, mnnReqQuery)
+
+		mnnHrefs := scrabHrefs(".main-alphabet__list a", letterDoc)
+		for _, mnnHref := range mnnHrefs {
+
+			mnnMedsHrefs := medicamentHrefs(f, mnnHref, true)
+			for _, medHref := range mnnMedsHrefs {
+				if isIn(medHref, gottenMedicaments) {
 					continue
 				}
 
-				meds <- newMedicament(medP, newDoc(medP, nil, ticker))
-				mapped[medP] = true
+				medicamentDoc := doc(f, medHref, nil)
+				medicament := newMedicament(medHref, medicamentDoc)
+				f.RawMedicaments <- medicament
 
-				if len(mapped) == limit {
-					quit <- true
-					return
-				}
+				gottenMedicaments[medHref] = true
 			}
 		}
 	}
-
-	quit <- true
 }
 
-func newDoc(path string, queryParams map[string]string, ticker *time.Ticker) *goquery.Document {
-	req, err := http.NewRequest("GET", URL+path, nil)
+func doc(f *parser.FarmaParser, href string, queryParams map[string]string) *goquery.Document {
+	req, err := http.NewRequest("GET", URL+href, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -233,51 +237,20 @@ func newDoc(path string, queryParams map[string]string, ticker *time.Ticker) *go
 		req.URL.RawQuery = q.Encode()
 	}
 
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != 200 {
-		log.Fatal(fmt.Errorf("status code error: %d %s", res.StatusCode, res.Status))
+	f.Jobs <- &parser.ResponseJob{
+		Type:    "doc",
+		Request: req,
 	}
 
-	doc, err := goquery.NewDocumentFromReader(res.Body)
-	if err != nil {
+	rspDoc := <-f.RspDocs
+	if rspDoc.Err != nil {
 		log.Fatal(err)
 	}
 
-	<-ticker.C
-
-	println(path)
-
-	return doc
+	return rspDoc.Doc
 }
 
 func isIn(s string, m map[string]bool) bool {
 	_, ok := m[s]
 	return ok
-}
-
-func insertAll(collectionName string, meds chan *medicament, quit chan bool) {
-	mongoClient := mongodb.NewMongoClient()
-	for {
-		select {
-		case m := <-meds:
-			mongoClient.InsertOne(collectionName, m)
-		case <-quit:
-			return
-		}
-	}
-}
-
-func ParseAll(collectionName string) {
-	meds := make(chan *medicament, 1)
-	quit := make(chan bool)
-	ticker := time.NewTicker(time.Second)
-
-	go insertAll(collectionName, meds, quit)
-
-	extract(meds, quit, -1, ticker)
 }

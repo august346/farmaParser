@@ -16,7 +16,8 @@ const (
 )
 
 type MongoClient struct {
-	client *mongo.Client
+	client         *mongo.Client
+	CollectionName string
 }
 
 func client() *mongo.Client {
@@ -65,4 +66,8 @@ func (mc *MongoClient) InsertOne(collectionName string, item interface{}) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func (mc *MongoClient) Insert(item interface{}) {
+	mc.InsertOne(mc.CollectionName, item)
 }
