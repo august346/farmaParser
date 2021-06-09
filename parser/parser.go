@@ -55,7 +55,6 @@ type RspByte struct {
 }
 
 type FarmaParser struct {
-	httpClient     *http.Client
 	ticker         *time.Ticker
 	RspDocs        chan *RspDoc
 	RspBytes       chan *RspByte
@@ -63,6 +62,22 @@ type FarmaParser struct {
 	RawMedicaments chan interface{}
 	instructionsJQ string
 	mongoClient    *mongodb.MongoClient
+	needTransform  bool
+}
+
+func NewRawFarmaParser(ticker *time.Ticker, collectionName string) *FarmaParser {
+	mClient := mongodb.NewMongoClient()
+	mClient.CollectionName = collectionName
+
+	return &FarmaParser{
+		ticker:         ticker,
+		RspDocs:        make(chan *RspDoc),
+		RspBytes:       make(chan *RspByte),
+		Jobs:           make(chan *ResponseJob),
+		RawMedicaments: make(chan interface{}),
+		mongoClient:    mClient,
+		needTransform:  false,
+	}
 }
 
 type checkProxyResult struct {
@@ -113,6 +128,8 @@ func (f *FarmaParser) responseDoc(r *http.Request) (*goquery.Document, error) {
 }
 
 func (f *FarmaParser) runParse() {
+	var c int
+
 	for {
 		job := <-f.Jobs
 
@@ -127,12 +144,15 @@ func (f *FarmaParser) runParse() {
 			log.Fatal(fmt.Sprintf("unknown job type `%s`", job.Type))
 		}
 
+		fmt.Println(c, time.Now().Format("2006-01-02T15:04:05.000Z"))
+		c++
+
 		<-f.ticker.C
 	}
 }
 
 func (f *FarmaParser) checkProxy() *checkProxyResult {
-	resp, err := f.httpClient.Get(URL_CHECK_IP)
+	resp, err := http.DefaultClient.Get(URL_CHECK_IP)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -159,17 +179,24 @@ func (f *FarmaParser) transformJSON(data interface{}) (*medicament, error) {
 }
 
 func (f *FarmaParser) runInsertions() {
+	var data interface{}
+	var err error
+
 	for {
-		med, err := f.transformJSON(<-f.RawMedicaments)
-		if err != nil {
-			log.Fatal(err)
+		data = <-f.RawMedicaments
+
+		if f.needTransform {
+			data, err = f.transformJSON(data)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
-		f.mongoClient.Insert(med)
+		f.mongoClient.Insert(data)
 	}
 }
 
 func (fp *FarmaParser) Run(f func(*FarmaParser)) {
-	fmt.Printf("Proxy OK: %q", fp.checkProxy())
+	fmt.Printf("Proxy OK: %q\n", *fp.checkProxy())
 
 	go fp.runParse()
 	go fp.runInsertions()

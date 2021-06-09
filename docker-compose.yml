@@ -21,8 +21,8 @@ services:
     ports:
       - 8081:8081
 
-  tor-proxy:
-    image: peterdavehello/tor-socks-proxy
-    # restart: always
-    ports: 
-      - 9150:9150
+  # tor-proxy:
+  #   image: peterdavehello/tor-socks-proxy
+  #   # restart: always
+  #   ports: 
+  #     - 9150:9150

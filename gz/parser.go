@@ -1,12 +1,14 @@
 package gz
 
 import (
-	"farma/mongodb"
 	"farma/parser"
 	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -15,16 +17,16 @@ const (
 	SHORT_SELECTOR string = "[itemtype=\"http://schema.org/Product\"]"
 )
 
-var URL string = string([]byte{104, 116, 116, 112, 115, 58, 47, 47, 103, 111, 114, 122, 100, 114, 97, 118, 46, 111, 114, 103, 47})
+var URL string
 
 type productShort struct {
 	Thumbnail string `json:"thumbnail"`
-	Path      string `json:"path"`
+	Href      string `json:"href"`
 	Title     string `json:"title"`
 }
 
 type catalog struct {
-	Path         string            `json:"path"`
+	Href         string            `json:"href"`
 	Instructions map[string]string `json:"instructions"`
 	Shorts       []productShort    `json:"shorts"`
 	Analogs      []productShort    `json:"analogs"`
@@ -41,7 +43,7 @@ type image struct {
 }
 
 type medicament struct {
-	Path         string            `json:"path"`
+	Href         string            `json:"href"`
 	Title        string            `json:"title"`
 	Groups       []string          `json:"groups"`
 	Description  *description      `json:"desciption"`
@@ -51,8 +53,8 @@ type medicament struct {
 	Price        float32           `json:"price"`
 }
 
-func letterPaths(doc *goquery.Document) []string {
-	paths := []string{}
+func letterHrefs(doc *goquery.Document) []string {
+	hrefs := []string{}
 
 	doc.Find(".c-alphabet-widget__sign").Each(func(i int, s *goquery.Selection) {
 		_, disabled := s.Attr("data-disabled")
@@ -62,30 +64,30 @@ func letterPaths(doc *goquery.Document) []string {
 
 		href, exists := s.Attr("href")
 		if exists {
-			paths = append(paths, href)
+			hrefs = append(hrefs, href)
 		}
 	})
 
-	return paths
+	return hrefs
 }
 
-func catalogPaths(doc *goquery.Document) []string {
-	paths := []string{}
+func catalogHrefs(doc *goquery.Document) []string {
+	hrefs := []string{}
 
 	linksList := doc.Find(".c-links-list")
 	linksList.Find("a").Each(func(i int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if exists {
-			paths = append(paths, href)
+			hrefs = append(hrefs, href)
 		}
 	})
 
-	return paths
+	return hrefs
 }
 
-func newCatalog(path string, doc *goquery.Document) *catalog {
+func newCatalog(href string, doc *goquery.Document) *catalog {
 	cat := &catalog{
-		Path:         path,
+		Href:         href,
 		Instructions: newInstructions(doc, "catalog"),
 	}
 	cat.Shorts, cat.Analogs = shorts(doc)
@@ -141,14 +143,14 @@ func extractShortsHelper(array *[]productShort) func(i int, s *goquery.Selection
 
 		a := s.Find(".c-prod-item__thumb a")
 
-		thumbnail, tExists := a.Find("img").Attr("data-src")
-		if tExists {
+		thumbnail, exists := a.Find("img").Attr("data-src")
+		if exists {
 			short.Thumbnail = thumbnail
 		}
 
-		path, lExists := a.Attr("href")
-		if lExists {
-			short.Path = path
+		href, exists := a.Attr("href")
+		if exists {
+			short.Href = href
 		}
 
 		short.Title = s.Find(".c-prod-item__title").Text()
@@ -157,9 +159,9 @@ func extractShortsHelper(array *[]productShort) func(i int, s *goquery.Selection
 	}
 }
 
-func newMedicament(path string, doc *goquery.Document) *medicament {
+func newMedicament(href string, doc *goquery.Document) *medicament {
 	med := &medicament{
-		Path:         path,
+		Href:         href,
 		Title:        doc.Find("h1.b-page-title[itemprop=\"name\"]").Text(),
 		Groups:       newGroups(doc),
 		Description:  newDescription(doc),
@@ -246,69 +248,56 @@ func newImages(doc *goquery.Document) []*image {
 	return imgs
 }
 
-func extract(p *parser.Parser, limit int, meds chan *medicament, cats chan *catalog, quit chan bool) {
-	mapped := map[string]bool{}
+func Jobber(f *parser.FarmaParser) {
+	URL = os.Getenv("GZ_URL")
 
-	for _, letP := range letterPaths(doc(p, "/")) {
-		for _, catP := range catalogPaths(doc(p, letP)) {
-			cat := newCatalog(catP, doc(p, catP))
-			cats <- cat
-			for _, sh := range append(cat.Shorts, cat.Analogs...) {
-				if isIn(sh.Path, mapped) {
+	gottenMedicaments := map[string]bool{}
+
+	for _, letterHref := range letterHrefs(doc(f, "/")) {
+		for _, categoryHref := range catalogHrefs(doc(f, letterHref)) {
+			catalog := newCatalog(categoryHref, doc(f, categoryHref))
+			for _, medicamentShort := range append(catalog.Shorts, catalog.Analogs...) {
+				if isIn(medicamentShort.Href, gottenMedicaments) {
 					continue
 				}
 
-				meds <- newMedicament(sh.Path, doc(p, sh.Path))
-				mapped[sh.Path] = true
+				medicamentDoc := doc(f, medicamentShort.Href)
+				medicament := newMedicament(medicamentShort.Href, medicamentDoc)
+				f.RawMedicaments <- medicament
 
-				if len(mapped) == limit {
-					quit <- true
-					return
-				}
+				gottenMedicaments[medicamentShort.Href] = true
 			}
 		}
 	}
-
-	quit <- true
 }
 
-func doc(p *parser.Parser, path string) *goquery.Document {
-	p.Paths <- path
-	return (<-p.Docs).Doc
+func doc(f *parser.FarmaParser, href string) *goquery.Document {
+	u, err := url.Parse(URL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	u.Path = path.Join(u.Path, href)
+
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:88.0) Gecko/20100101 Firefox/88.0")
+
+	f.Jobs <- &parser.ResponseJob{
+		Type:    "doc",
+		Request: req,
+	}
+
+	rspDoc := <-f.RspDocs
+	if rspDoc.Err != nil {
+		log.Fatal(err)
+	}
+
+	return rspDoc.Doc
 }
 
 func isIn(s string, m map[string]bool) bool {
 	_, ok := m[s]
 	return ok
-}
-
-func insertAll(medColName, catColName string, meds chan *medicament, cats chan *catalog, quit chan bool) {
-	mongoClient := mongodb.NewMongoClient()
-	for {
-		select {
-		case m := <-meds:
-			mongoClient.InsertOne(medColName, m)
-		case c := <-cats:
-			mongoClient.InsertOne(catColName, c)
-		case <-quit:
-			return
-		}
-	}
-}
-
-func ParseAll(medColName, catColName string) {
-	prsr := &parser.Parser{
-		Paths: make(chan string, 1),
-		Docs:  make(chan *parser.Doc, 1),
-		Pause: 2 * time.Second,
-		URL:   URL,
-	}
-	meds := make(chan *medicament, 1)
-	cats := make(chan *catalog, 1)
-	quit := make(chan bool)
-
-	go prsr.Parse()
-	go insertAll(medColName, catColName, meds, cats, quit)
-
-	extract(prsr, -1, meds, cats, quit)
 }

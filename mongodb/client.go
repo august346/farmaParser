@@ -17,7 +17,7 @@ const (
 
 type MongoClient struct {
 	client         *mongo.Client
-	collectionName string
+	CollectionName string
 }
 
 func client() *mongo.Client {
@@ -69,5 +69,5 @@ func (mc *MongoClient) InsertOne(collectionName string, item interface{}) {
 }
 
 func (mc *MongoClient) Insert(item interface{}) {
-	mc.InsertOne(mc.collectionName, item)
+	mc.InsertOne(mc.CollectionName, item)
 }
