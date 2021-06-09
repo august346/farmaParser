@@ -6,6 +6,7 @@ import (
 	"farma/hp"
 	"farma/oz"
 	"farma/parser"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -55,8 +56,6 @@ func main() {
 	}
 	setUpProxy()
 
-	println("started")
-
 	args := os.Args[1:]
 
 	switch args[0] {
@@ -69,11 +68,15 @@ func main() {
 	case "hp":
 		ticker = time.NewTicker(time.Second)
 		jobber = hp.Jobber
+	default:
+		log.Fatalf("Unknown jobber `%s`!", args[0])
 	}
+
+	fmt.Printf("started `%s`\n", args[0])
 
 	parser.NewRawFarmaParser(ticker, args[1]).Run(jobber)
 
-	println("parsed")
+	fmt.Println("parsed")
 
-	println("ended")
+	fmt.Println("ended")
 }
